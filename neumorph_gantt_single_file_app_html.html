@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Neumorph Gantt — Single‑file App</title>
+  <style>
+    :root{
+      --bg:#e9eef5; /* app background */
+      --surface:#f7f9fc; /* cards & panels */
+      --ink:#1f2937; /* text */
+      --muted:#6b7280; /* secondary text */
+      --accent:#6366f1; /* primary */
+      --accent-2:#14b8a6; /* secondary */
+      --warn:#f59e0b;
+      --danger:#ef4444;
+      --ok:#10b981;
+      --shadow-dark:#d0d7e2;
+      --shadow-light:#ffffff;
+      --lane-h:56px; /* row height */
+      --bar-h:26px; /* task bar height */
+      --radius-lg:18px;
+      --radius-sm:12px;
+    }
+    html,body{height:100%;}
+    body{
+      margin:0; font-family:ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      background:var(--bg); color:var(--ink);
+    }
+    .app{display:flex; flex-direction:column; height:100%; gap:12px; padding:16px; box-sizing:border-box;}
+    /* Neumorphism helpers */
+    .neo{ background:var(--surface); border-radius:var(--radius-lg);
+      box-shadow: 10px 10px 22px var(--shadow-dark), -10px -10px 22px var(--shadow-light);
+    }
+    .neo-inset{ box-shadow: inset 8px 8px 16px var(--shadow-dark), inset -8px -8px 16px var(--shadow-light);}   
+
+    /* Top bar */
+    .toolbar{ display:flex; align-items:center; gap:10px; padding:12px; position:sticky; top:0; z-index:10;}
+    .title{font-weight:700; margin-right:auto; letter-spacing:.2px;}
+    .btn{ display:inline-flex; align-items:center; gap:8px; padding:10px 12px; border-radius:14px; border:none; cursor:pointer; background:var(--surface);
+      box-shadow: 6px 6px 14px var(--shadow-dark), -6px -6px 14px var(--shadow-light);
+      color:var(--ink); font-weight:600; transition: transform .05s ease, box-shadow .2s ease; user-select:none;
+    }
+    .btn:hover{ transform: translateY(-1px);}    
+    .btn:active{ box-shadow: inset 4px 4px 10px var(--shadow-dark), inset -4px -4px 10px var(--shadow-light); transform: translateY(0);}    
+    .btn.primary{ background: linear-gradient(145deg, #eef2ff, #f7f8ff); color:#2e2f73;}
+    .btn.warn{ background: linear-gradient(145deg, #fff7e6, #fffaf0); color:#7a4b00;}
+    .btn.toggle.active{ outline:2px solid var(--accent);}    
+    .sp{width:1px; height:28px; background:linear-gradient(#e6ebf3,#cfd6e3,#e6ebf3);}    
+
+    /* Layout: left list + right chart */
+    .board{ flex:1; display:grid; grid-template-columns: 260px 1fr; gap:12px; min-height:0; }
+    .left{ overflow:auto; padding:12px;}
+    .right{ position:relative; overflow:auto;}
+
+    /* Swimlanes */
+    .team{ display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:14px; margin-bottom:8px;}
+    .team .dot{ width:10px; height:10px; border-radius:50%;}
+
+    .lane{ position:relative; height:var(--lane-h); border-bottom:1px solid #e5eaf3;}
+    .lane-name{ position:absolute; left:12px; top:50%; transform:translateY(-50%); font-weight:600; color:#374151;}
+
+    /* Timeline */
+    .timeline{ position:sticky; top:0; background:var(--surface); z-index:2;}
+    .tl-months{ display:flex; border-bottom:1px solid #e5eaf3; font-size:12px; color:#374151;}
+    .tl-days{ display:flex; border-bottom:1px solid #eef2f8; font-size:11px; color:#6b7280;}
+    .tl-cell{ box-sizing:border-box; padding:4px 6px; border-right:1px solid #eef2f8; white-space:nowrap;}
+
+    .grid{ position:relative;}
+    .vline{ position:absolute; top:0; bottom:0; width:1px; background:#eef2f8;}
+
+    /* Items */
+    .item{ position:absolute; height:var(--bar-h); display:flex; align-items:center; justify-content:center; font-size:12px; cursor:grab; user-select:none;}
+    .item.dragging{ opacity:.85; cursor:grabbing;}
+    .item .label{ padding:0 10px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+    .task.rect{ border-radius:12px;}
+    .task.pill{ border-radius:999px;}
+    .task.slant{ clip-path: polygon(8% 0, 100% 0, 92% 100%, 0 100%); border-radius:8px;}
+
+    /* Selection + link-source highlight */
+    .link-source{ outline:2px dashed var(--accent); outline-offset:2px; }
+    .selected{ outline:2px solid var(--accent-2); outline-offset:2px; }
+
+    .handle{ position:absolute; top:0; width:8px; height:100%; cursor:ew-resize; opacity:.0001;}
+    .handle.left{ left:0;}
+    .handle.right{ right:0;}
+    .resize-grip{ position:absolute; top:4px; width:10px; height:calc(100% - 8px); border-radius:2px; background:rgba(255,255,255,.25);}    
+    .resize-grip.left{ left:-2px;}
+    .resize-grip.right{ right:-2px;}
+
+    /* Stage gate (diamond) */
+    .gate{ position:absolute; width:0; height:0; }
+    .gate .diamond{ width:22px; height:22px; transform:translate(-11px, calc(-11px + var(--bar-h)/2)); background:currentColor; clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); box-shadow: 4px 4px 10px rgba(0,0,0,.1);}    
+    .gate .label{ position:absolute; top: calc(var(--bar-h) + 8px); left:-60px; width:120px; text-align:center; font-size:12px; color:#334155;}
+
+    /* Connectors */
+    svg.links{ position:absolute; left:0; top:0; overflow:visible; pointer-events:none;}
+    .connector{ fill:none; stroke:#9aa6bc; stroke-width:2; marker-end:url(#arrow); }
+
+    /* Inspector */
+    .inspector{ position:fixed; right:16px; bottom:16px; width:340px; padding:14px; border-radius:18px; background:var(--surface); box-shadow: 10px 10px 22px var(--shadow-dark), -10px -10px 22px var(--shadow-light); z-index:30;}
+    .inspector h3{ margin:.2rem 0 .8rem 0; font-size:16px;}
+    .inspector label{ display:block; font-size:12px; color:#475569; margin-top:8px;}
+    .inspector input[type="text"], .inspector input[type="date"], .inspector select{ width:100%; box-sizing:border-box; padding:10px; border:none; border-radius:12px; background: var(--surface); color:var(--ink);
+      box-shadow: inset 6px 6px 12px var(--shadow-dark), inset -6px -6px 12px var(--shadow-light);
+    }
+    .color-row{ display:flex; align-items:center; gap:8px; }
+    .color-row input[type="color"]{ width:44px; height:34px; padding:0; border:none; border-radius:10px; background:var(--surface);
+      box-shadow: inset 6px 6px 12px var(--shadow-dark), inset -6px -6px 12px var(--shadow-light);
+    }
+    .color-row input[type="text"]{ flex:1; }
+
+    /* Tooltip */
+    .tip{ position:fixed; padding:6px 8px; border-radius:10px; font-size:12px; background:#111827; color:#fff; pointer-events:none; opacity:0; transform:translateY(-6px); transition:opacity .1s ease; z-index:50;}
+
+    /* Legend */
+    .legend{ display:flex; align-items:center; gap:12px; font-size:12px; color:#374151;}
+    .legend span{ display:inline-flex; align-items:center; gap:6px;}
+    .legend .box{ width:16px; height:16px; border-radius:6px; background:#94a3b8;}
+    .legend .dia{ width:16px; height:16px; clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); background:#94a3b8;}
+
+    /* Mini modal for dependency type */
+    .mini-modal{ position:fixed; background:var(--surface); border-radius:12px; padding:10px; display:none; box-shadow: 10px 10px 22px var(--shadow-dark), -10px -10px 16px var(--shadow-light); z-index:60;}
+    .mini-modal select, .mini-modal input{ width:100%; margin-top:6px;}
+
+    /* Small helper text */
+    .muted{ color:var(--muted); font-size:12px;}
+
+    /* Scrollbar tweak */
+    ::-webkit-scrollbar{ height:10px; width:10px; }
+    ::-webkit-scrollbar-thumb{ background:#cdd6e6; border-radius:12px; }
+    ::-webkit-scrollbar-track{ background:transparent; }
+
+    .hidden{ display:none;}
+
+    /* Toast */
+    .toast{ position:fixed; left:16px; bottom:16px; padding:10px 12px; border-radius:12px; background:#111827; color:#fff; font-size:12px; box-shadow: 10px 10px 22px var(--shadow-dark), -10px -10px 22px var(--shadow-light); max-width:420px; z-index:70; display:none;}
+    .toast.ok{ background:#065f46; }
+    .toast.err{ background:#7f1d1d; }
+
+    /* Ensure colours render in print */
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    @media print {
+      @page { size: A4 landscape; margin: 12mm; }
+      html, body { background:#fff !important; }
+      .toolbar, #inspector, .mini-modal, .tip, .toast { display:none !important; }
+      .neo, .neo-inset { box-shadow:none !important; }
+      .app { padding:0 !important; }
+      .board { gap:8px !important; }
+      .lane { border-color:#ddd !important; }
+      .tl-months, .tl-days { border-bottom:1px solid #ddd !important; }
+      .grid .vline { background:#eee !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="toolbar neo">
+      <div class="title">Neumorph Gantt</div>
+      <button class="btn" id="addTeamBtn">+ Team/Resource</button>
+      <button class="btn" id="addTaskBtn">+ Task</button>
+      <button class="btn" id="addGateBtn">+ Stage gate</button>
+      <div class="sp"></div>
+      <button class="btn toggle" id="linkModeBtn" title="Connect elements (dependencies)">Link elements</button>
+      <button class="btn" id="openInspectorBtn" title="Open inspector for selected item">Inspector</button>
+      <div class="legend">
+        <span><i class="box"></i> Task</span>
+        <span><i class="dia"></i> Stage gate</span>
+      </div>
+      <div class="sp"></div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <label class="muted">Zoom</label>
+        <input type="range" id="zoom" min="6" max="36" value="22" />
+      </div>
+      <button class="btn" id="exportBtn" title="Export PDF">Export PDF</button>
+      <input type="file" id="importFile" accept="application/json" class="hidden" />
+      <button class="btn" id="importBtn" title="Import JSON">Import</button>
+      <div class="sp"></div>
+      <button class="btn" id="adjustTimeBtn" title="Adjust timeline range & headers">Adjust timeline</button>
+    </div>
+
+    <div class="board" id="board">
+      <div class="left neo" id="leftPanel">
+        <div class="muted" style="margin-bottom:8px;">Teams / resources</div>
+        <div id="teamList"></div>
+      </div>
+
+      <div class="right neo" id="rightPanel">
+        <div class="timeline" id="timeline"></div>
+        <div class="grid" id="grid"></div>
+        <svg class="links" id="links" width="0" height="0"></svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- Timeline Adjust Modal -->
+  <div class="mini-modal" id="timeModal" style="width:340px;">
+    <div style="font-weight:700; margin-bottom:6px;">Adjust timeline</div>
+    <label>Segmentation
+      <select id="timeSeg">
+        <option value="days">Show all dates</option>
+        <option value="weeks">Show weeks per month</option>
+        <option value="none">No segmentation</option>
+      </select>
+    </label>
+    <label style="margin-top:10px;">Range mode
+      <select id="timeMode">
+        <option value="auto">Auto — fit to items</option>
+        <option value="manual">Manual dates</option>
+      </select>
+    </label>
+    <div id="timeAutoBlock">
+      <label>Pad before (days)<input type="number" id="timePadBefore" value="7" /></label>
+      <label>Pad after (days)<input type="number" id="timePadAfter" value="21" /></label>
+    </div>
+    <div id="timeManualBlock" style="display:none;">
+      <label>Chart start date<input type="date" id="timeStart" /></label>
+      <label>Number of months<input type="number" id="timeMonthsCount" value="12" min="1" max="120"/></label>
+    </div>
+    <div style="display:flex; gap:8px; margin-top:8px;">
+      <button class="btn primary" id="applyTime">Apply</button>
+      <button class="btn" id="cancelTime">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Inspector -->
+  <div class="inspector" id="inspector" style="display:none;">
+    <h3>Inspector</h3>
+    <div id="inspectorBody"></div>
+    <div style="display:flex; gap:8px; margin-top:12px;">
+      <button class="btn" id="deleteBtn">Delete</button>
+      <button class="btn primary" id="closeInspector">Done</button>
+    </div>
+  </div>
+
+  <!-- Dependency Modal -->
+  <div class="mini-modal" id="depModal">
+    <div style="font-weight:700;">Dependency</div>
+    <label>Type
+      <select id="depType">
+        <option value="FS">Finish → Start (FS)</option>
+        <option value="SS">Start → Start (SS)</option>
+        <option value="FF">Finish → Finish (FF)</option>
+        <option value="SF">Start → Finish (SF)</option>
+      </select>
+    </label>
+    <label>Lag (days)
+      <input type="number" id="depLag" value="0" />
+    </label>
+    <div style="display:flex; gap:8px; margin-top:8px;">
+      <button class="btn primary" id="createDep">Create</button>
+      <button class="btn" id="cancelDep">Cancel</button>
+    </div>
+  </div>
+
+  <div class="tip" id="tip"></div>
+  <div class="toast" id="toast"></div>
+
+  <script>
+  // ====== Utilities ======
+  const DAY = 24*60*60*1000;
+  const fmt = d => new Date(d).toISOString().slice(0,10);
+  const parse = s => new Date(s+"T00:00:00").getTime();
+  const clamp = (v,min,max) => Math.max(min, Math.min(max, v));
+  const uid = (()=>{ let n=1; return ()=>"id"+(n++); })();
+
+  function addDays(t, days){ return t + days*DAY; }
+  function addMonthsTs(ts, n){ const d=new Date(ts); return new Date(d.getFullYear(), d.getMonth()+n, 1).getTime(); }
+  function monthStartTs(ts){ const d=new Date(ts); return new Date(d.getFullYear(), d.getMonth(), 1).getTime(); }
+  function deepClone(o){ return JSON.parse(JSON.stringify(o)); }
+
+  function isHex(c){ return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(String(c||'')); }
+  function expandHex3(h){ return '#'+h[1]+h[1]+h[2]+h[2]+h[3]+h[3]; }
+  function normaliseColor(c){
+    if(!c) return '#000000'; c=String(c).trim();
+    if(isHex(c)) return (c.length===4? expandHex3(c): c).toLowerCase();
+    const ctx = document.createElement('canvas').getContext('2d');
+    ctx.fillStyle = c; // browser normalises
+    const rgb = ctx.fillStyle; // "#rrggbb" in most cases, else rgb(...)
+    if(isHex(rgb)) return rgb.toLowerCase();
+    const m = /^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/i.exec(rgb);
+    if(m){
+      const toHex = (n)=> ('0'+parseInt(n,10).toString(16)).slice(-2);
+      return ('#'+toHex(m[1])+toHex(m[2])+toHex(m[3])).toLowerCase();
+    }
+    return '#000000';
+  }
+
+  // ====== State ======
+  const state = {
+    pxPerDay: 22,
+    teams: [], // {id,name,color}
+    items: [], // task: {id,type:'task', name, teamId, start, end, color, text, shape}
+               // gate: {id,type:'gate', name, teamId, date, color}
+    deps: [],  // {id, fromId, toId, type:'FS'|'SS'|'FF'|'SF', lag:0}
+    selection: null,
+    linkMode: false,
+    _linkFrom: null,
+    viewStart: null,
+    viewEnd: null,
+    time: { mode:'auto', padBefore:7, padAfter:21, segmentation:'days', manualStart:null, manualEnd:null }
+  };
+
+  // ====== Elements ======
+  const leftPanel = document.getElementById('leftPanel');
+  const teamList = document.getElementById('teamList');
+  const rightPanel = document.getElementById('rightPanel');
+  const timeline = document.getElementById('timeline');
+  const grid = document.getElementById('grid');
+  const linksSvg = document.getElementById('links');
+  const zoom = document.getElementById('zoom');
+  const tip = document.getElementById('tip');
+  const toast = document.getElementById('toast');
+  const board = document.getElementById('board');
+
+  // ====== View range ======
+  function computeMinStart(){
+    if(!state.items.length) return parse(fmt(new Date()));
+    let t = Infinity;
+    for(const it of state.items){
+      if(it.type==='task'){ t = Math.min(t, it.start); }
+      else { t = Math.min(t, it.date); }
+    }
+    return t;
+  }
+  function computeMaxEnd(){
+    if(!state.items.length) return addDays(parse(fmt(new Date())), 30);
+    let t = -Infinity;
+    for(const it of state.items){
+      if(it.type==='task'){ t = Math.max(t, it.end); }
+      else { t = Math.max(t, it.date); }
+    }
+    return t;
+  }
+  function computeViewRange(){
+    if(state.time.mode==='manual' && state.time.manualStart && state.time.manualEnd){
+      state.viewStart = state.time.manualStart;
+      state.viewEnd = Math.max(state.time.manualEnd, state.viewStart + DAY);
+      return;
+    }
+    const min = computeMinStart();
+    const max = computeMaxEnd();
+    state.viewStart = addDays(min, -Math.max(0, parseInt(state.time.padBefore||0)));
+    state.viewEnd = addDays(max, Math.max(0, parseInt(state.time.padAfter||0)));
+  }
+
+  // ====== Timeline & grid ======
+  function dateToX(t){ return Math.round((t - state.viewStart)/DAY * state.pxPerDay); }
+  function xToDate(x){ return state.viewStart + Math.round(x / state.pxPerDay) * DAY; }
+
+  function renderLeft(){
+    teamList.innerHTML = '';
+    for(const tm of state.teams){
+      const el = document.createElement('div');
+      el.className = 'team neo-inset';
+      el.innerHTML = `<div class="dot" style="background:${tm.color}"></div><div contenteditable data-id="${tm.id}" class="team-name">${tm.name}</div>`;
+      el.querySelector('.team-name').addEventListener('input', (e)=>{
+        tm.name = e.currentTarget.textContent.trim();
+        renderGrid();
+      });
+      teamList.appendChild(el);
+    }
+  }
+
+  function renderTimeline(){
+    const days = Math.ceil((state.viewEnd - state.viewStart)/DAY);
+    const w = days * state.pxPerDay;
+
+    timeline.innerHTML = '';
+    const months = document.createElement('div'); months.className='tl-months'; months.style.width = w+'px';
+
+    let daysRow = null;
+    if(state.time.segmentation!=='none'){
+      daysRow = document.createElement('div'); daysRow.className='tl-days'; daysRow.style.width = w+'px';
+    }
+
+    // Build months header and, if needed, segmentation row
+    let current = new Date(state.viewStart);
+    current.setHours(0,0,0,0);
+    while(current.getTime() < state.viewEnd){
+      const monthStart = new Date(current.getFullYear(), current.getMonth(), 1).getTime();
+      const visibleStart = Math.max(monthStart, state.viewStart);
+      const nextMonth = new Date(current.getFullYear(), current.getMonth()+1, 1).getTime();
+      const visibleEnd = Math.min(nextMonth, state.viewEnd);
+      const spanDays = Math.max(1, Math.ceil((visibleEnd - visibleStart)/DAY));
+      const spanWidth = spanDays * state.pxPerDay;
+
+      const mc = document.createElement('div'); mc.className='tl-cell'; mc.style.width = spanWidth+'px';
+      mc.textContent = new Date(visibleStart).toLocaleString(undefined, { month:'long', year:'numeric' });
+      months.appendChild(mc);
+
+      if(daysRow){
+        if(state.time.segmentation==='days'){
+          for(let i=0;i<spanDays;i++){
+            const dcell = document.createElement('div'); dcell.className='tl-cell'; dcell.style.width = state.pxPerDay+'px';
+            const d = new Date(visibleStart + i*DAY);
+            dcell.textContent = d.getDate();
+            daysRow.appendChild(dcell);
+          }
+        } else if(state.time.segmentation==='weeks'){
+          const totalDays = spanDays;
+          const weekCount = Math.ceil(totalDays/7);
+          for(let wIdx=0; wIdx<weekCount; wIdx++){
+            const segDays = (wIdx < weekCount-1) ? 7 : (totalDays - (weekCount-1)*7);
+            const wcell = document.createElement('div'); wcell.className='tl-cell'; wcell.style.width = (segDays*state.pxPerDay)+'px';
+            wcell.textContent = 'Wk ' + (wIdx+1);
+            daysRow.appendChild(wcell);
+          }
+        }
+      }
+
+      current = new Date(nextMonth);
+    }
+
+    timeline.appendChild(months);
+    if(daysRow) timeline.appendChild(daysRow);
+  }
+
+  function laneIndexByTeam(teamId){ return state.teams.findIndex(t=>t.id===teamId); }
+
+  function renderGrid(){
+    const days = Math.ceil((state.viewEnd - state.viewStart)/DAY);
+    const w = days * state.pxPerDay;
+    grid.style.width = w+'px';
+    grid.style.height = (state.teams.length * parseInt(getComputedStyle(document.documentElement).getPropertyValue('--lane-h'))) + 'px';
+    grid.innerHTML = '';
+
+    // draw vertical day lines
+    for(let i=0;i<=days;i++){
+      const x = i*state.pxPerDay;
+      const v = document.createElement('div'); v.className='vline'; v.style.left = x+'px';
+      grid.appendChild(v);
+    }
+
+    // lanes
+    state.teams.forEach((t, idx)=>{
+      const lane = document.createElement('div');
+      lane.className = 'lane';
+      lane.style.top = (idx*parseInt(getComputedStyle(document.documentElement).getPropertyValue('--lane-h'))) + 'px';
+      lane.style.left = '0'; lane.style.right = '0';
+      const name = document.createElement('div'); name.className='lane-name'; name.textContent = t.name;
+      lane.appendChild(name);
+      grid.appendChild(lane);
+    });
+
+    // items
+    for(const it of state.items){
+      const idx = laneIndexByTeam(it.teamId);
+      if(idx<0) continue;
+      const y = idx*parseInt(getComputedStyle(document.documentElement).getPropertyValue('--lane-h')) + (parseInt(getComputedStyle(document.documentElement).getPropertyValue('--lane-h')) - parseInt(getComputedStyle(document.documentElement).getPropertyValue('--bar-h')))/2;
+
+      if(it.type==='task'){
+        const x = dateToX(it.start);
+        const wpx = Math.max(state.pxPerDay, dateToX(it.end) - dateToX(it.start));
+        const el = document.createElement('div');
+        el.className = `item task ${it.shape||'rect'}`;
+        el.style.left = x+'px';
+        el.style.top = y+'px';
+        el.style.width = wpx+'px';
+        el.style.background = it.color||'#a3bffa';
+        el.style.color = it.text||'#0b1324';
+        el.dataset.id = it.id;
+        el.innerHTML = `<div class="handle left"></div><div class="handle right"></div><div class="label" title="${it.name}">${it.name}</div><div class="resize-grip left"></div><div class="resize-grip right"></div>`;
+        if(state.selection===it.id) el.classList.add('selected');
+        addDragHandlers(el, it);
+        el.addEventListener('dblclick', ()=> openInspector(it.id));
+        grid.appendChild(el);
+      } else {
+        const x = dateToX(it.date);
+        const el = document.createElement('div');
+        el.className='gate'; el.dataset.id = it.id;
+        el.style.left = x+'px'; el.style.top = y+'px';
+        el.style.color = it.color||'#8b5cf6';
+        el.innerHTML = `<div class="diamond"></div><div class="label">${it.name}</div>`;
+        if(state.selection===it.id) el.classList.add('selected');
+        addGateDragHandlers(el, it);
+        el.addEventListener('dblclick', ()=> openInspector(it.id));
+        grid.appendChild(el);
+      }
+    }
+
+    renderLinks();
+    if(state._linkFrom){ highlightLinkSource(state._linkFrom, true); }
+  }
+
+  function renderLinks(){
+    const days = Math.ceil((state.viewEnd - state.viewStart)/DAY);
+    const w = days * state.pxPerDay;
+    const h = state.teams.length * parseInt(getComputedStyle(document.documentElement).getPropertyValue('--lane-h'));
+    linksSvg.setAttribute('width', w);
+    linksSvg.setAttribute('height', h);
+    linksSvg.innerHTML = `
+      <defs>
+        <marker id="arrow" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto">
+          <path d="M0,0 L10,4 L0,8 z" fill="#9aa6bc"></path>
+        </marker>
+      </defs>
+    `;
+
+    for(const d of state.deps){
+      const a = getItem(d.fromId);
+      const b = getItem(d.toId);
+      if(!a||!b) continue;
+      const ay = laneY(a.teamId) + parseInt(getComputedStyle(document.documentElement).getPropertyValue('--bar-h'))/2;
+      const by = laneY(b.teamId) + parseInt(getComputedStyle(document.documentElement).getPropertyValue('--bar-h'))/2;
+
+      let ax, bx;
+      if(d.type==='FS'){ ax = (a.type==='task'? dateToX(a.end) : dateToX(a.date)); bx = (b.type==='task'? dateToX(b.start) : dateToX(b.date)); }
+      else if(d.type==='SS'){ ax = (a.type==='task'? dateToX(a.start) : dateToX(a.date)); bx = (b.type==='task'? dateToX(b.start) : dateToX(b.date)); }
+      else if(d.type==='FF'){ ax = (a.type==='task'? dateToX(a.end) : dateToX(a.date)); bx = (b.type==='task'? dateToX(b.end) : dateToX(b.date)); }
+      else { ax = (a.type==='task'? dateToX(a.start) : dateToX(a.date)); bx = (b.type==='task'? dateToX(b.end) : dateToX(b.date)); }
+      const lagX = d.lag * state.pxPerDay;
+      bx += lagX;
+
+      const midX = ax + Math.max(24, (bx-ax)/2);
+      const path = `M ${ax},${ay} C ${midX},${ay} ${midX},${by} ${bx},${by}`;
+      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('class','connector');
+      p.setAttribute('d', path);
+      linksSvg.appendChild(p);
+    }
+  }
+
+  function laneY(teamId){
+    const idx = laneIndexByTeam(teamId);
+    const laneH = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--lane-h'));
+    if(idx<0) return (laneH - parseInt(getComputedStyle(document.documentElement).getPropertyValue('--bar-h')))/2; // safe default
+    return idx*laneH + (laneH - parseInt(getComputedStyle(document.documentElement).getPropertyValue('--bar-h')))/2;
+  }
+
+  // ====== Selection ======
+  function setSelection(id){
+    state.selection = id || null;
+    grid.querySelectorAll('[data-id]').forEach(el=> el.classList.remove('selected'));
+    if(id){ const el = grid.querySelector(`[data-id="${id}"]`); if(el) el.classList.add('selected'); }
+  }
+
+  grid.addEventListener('click', (e)=>{
+    const el = e.target.closest('[data-id]');
+    if(!el){ setSelection(null); }
+  });
+
+  // ====== Drag & Resize Handlers ======
+  function addDragHandlers(el, it){
+    let mode = null; // 'move'|'resize-left'|'resize-right'
+    let startX = 0; let startStart = 0; let startEnd = 0;
+
+    const onDown = (e)=>{
+      setSelection(it.id);
+      if(state.linkMode){ e.preventDefault(); return; }
+      const target = e.target;
+      if(target.classList.contains('handle')){
+        mode = target.classList.contains('left') ? 'resize-left' : 'resize-right';
+      } else {
+        mode = 'move';
+      }
+      startX = e.clientX; startStart = it.start; startEnd = it.end;
+      el.classList.add('dragging');
+      showTip(it);
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    };
+
+    const onMove = (e)=>{
+      const dx = e.clientX - startX;
+      const ddays = Math.round(dx / state.pxPerDay);
+      if(mode==='move'){
+        it.start = addDays(startStart, ddays);
+        it.end = addDays(startEnd, ddays);
+      } else if(mode==='resize-left'){
+        const newStart = addDays(startStart, ddays);
+        if(newStart < it.end - DAY) it.start = newStart; // keep >=1 day
+      } else if(mode==='resize-right'){
+        const newEnd = addDays(startEnd, ddays);
+        if(newEnd > it.start + DAY) it.end = newEnd;
+      }
+      // fast DOM update (no full re-render)
+      const leftPx = dateToX(it.start);
+      el.style.left = leftPx + 'px';
+      el.style.width = Math.max(state.pxPerDay, dateToX(it.end) - dateToX(it.start)) + 'px';
+      positionTip(e.clientX, e.clientY, it);
+    };
+
+    const onUp = ()=>{
+      el.classList.remove('dragging');
+      hideTip();
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      cascadeFrom(it.id);
+      computeViewRange();
+      renderAll();
+      setSelection(it.id);
+    };
+
+    el.addEventListener('mousedown', onDown);
+    el.addEventListener('click', (e)=>{
+      setSelection(it.id);
+      if(state.linkMode){
+        handleLinkClick(it.id, e);
+      } else {
+        openInspector(it.id);
+      }
+    });
+  }
+
+  function addGateDragHandlers(el, it){
+    let startX = 0; let startDate = 0; let dragging=false;
+    const onDown = (e)=>{ 
+      setSelection(it.id);
+      if(state.linkMode){ e.preventDefault(); return; }
+      dragging=true; startX = e.clientX; startDate = it.date; el.classList.add('dragging'); showTip(it);
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    };
+    const onMove = (e)=>{ if(!dragging) return; const dx=e.clientX-startX; const ddays=Math.round(dx/state.pxPerDay); it.date = addDays(startDate, ddays); el.style.left = dateToX(it.date) + 'px'; positionTip(e.clientX, e.clientY, it); };
+    const onUp = ()=>{ dragging=false; el.classList.remove('dragging'); hideTip(); cascadeFrom(it.id); computeViewRange(); renderAll(); setSelection(it.id); window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+    el.addEventListener('mousedown', onDown);
+    el.addEventListener('click', (e)=>{ setSelection(it.id); if(state.linkMode){ handleLinkClick(it.id, e);} else { openInspector(it.id);} });
+  }
+
+  function showTip(it){ if(!it) return; tip.style.opacity=1; tip.textContent = (it.type==='task'? `${it.name}: ${fmt(it.start)} → ${fmt(it.end)}` : `${it.name}: ${fmt(it.date)}`); }
+  function positionTip(x,y,it){ tip.style.left=(x+12)+'px'; tip.style.top=(y+12)+'px'; if(it){ tip.textContent = (it.type==='task'? `${it.name}: ${fmt(it.start)} → ${fmt(it.end)}` : `${it.name}: ${fmt(it.date)}`);} }
+  function hideTip(){ tip.style.opacity=0; }
+
+  // ====== Dependencies ======
+  function handleLinkClick(itemId, e){
+    if(!state.linkMode) return;
+    if(!state._linkFrom){
+      state._linkFrom = itemId;
+      highlightLinkSource(itemId, true);
+      tip.style.opacity=1; tip.textContent='Select the dependent item…'; positionTip(e.clientX, e.clientY);
+      return;
+    }
+    if(state._linkFrom === itemId){ 
+      highlightLinkSource(itemId, false);
+      state._linkFrom = null; hideTip(); return; 
+    }
+    openDepModal(state._linkFrom, itemId, e.clientX, e.clientY);
+  }
+
+  function openDepModal(fromId, toId, x, y){
+    const modal = document.getElementById('depModal');
+    placeModal(modal, x, y);
+    document.getElementById('depType').value = 'FS';
+    document.getElementById('depLag').value = 0;
+    const onCreate = ()=>{
+      const type = document.getElementById('depType').value;
+      const lag = parseInt(document.getElementById('depLag').value)||0;
+      state.deps.push({id:uid(), fromId, toId, type, lag});
+      highlightLinkSource(fromId, false);
+      state._linkFrom = null; hideTip(); modal.style.display='none';
+      cascadeFrom(fromId); renderAll();
+      cleanup();
+    };
+    const onCancel = ()=>{ 
+      highlightLinkSource(fromId, false);
+      state._linkFrom=null; hideTip(); modal.style.display='none'; cleanup(); };
+    const cleanup = ()=>{
+      document.getElementById('createDep').removeEventListener('click', onCreate);
+      document.getElementById('cancelDep').removeEventListener('click', onCancel);
+    };
+    document.getElementById('createDep').addEventListener('click', onCreate);
+    document.getElementById('cancelDep').addEventListener('click', onCancel);
+  }
+
+  function getItem(id){ return state.items.find(x=>x.id===id); }
+  function successorsOf(id){ return state.deps.filter(d=>d.fromId===id).map(d=>({dep:d, item:getItem(d.toId)})); }
+  function predecessorsOf(id){ return state.deps.filter(d=>d.toId===id).map(d=>({dep:d, item:getItem(d.fromId)})); }
+
+  function highlightLinkSource(id, on){
+    const el = grid.querySelector(`[data-id="${id}"]`);
+    if(el) el.classList.toggle('link-source', !!on);
+  }
+
+  function cascadeFrom(id){
+    const queue = [id];
+    const seen = new Set();
+    while(queue.length){
+      const cur = queue.shift();
+      if(seen.has(cur)) continue; seen.add(cur);
+      const succ = successorsOf(cur);
+      for(const {dep, item:child} of succ){
+        if(!child) continue;
+        const parent = getItem(dep.fromId);
+        if(!parent) continue;
+        const before = deepClone(child);
+        enforce(dep, parent, child);
+        if(changed(before, child)){
+          queue.push(child.id);
+        }
+      }
+    }
+  }
+
+  function changed(a,b){
+    if(!a||!b) return false;
+    if(a.type!==b.type) return true;
+    if(a.type==='task') return a.start!==b.start || a.end!==b.end;
+    return a.date!==b.date;
+  }
+
+  function enforce(dep, parent, child){
+    const lag = (dep.lag||0)*DAY;
+    let pStart, pEnd, cStart, cEnd;
+    if(parent.type==='task'){
+      pStart = parent.start; pEnd = parent.end;
+    } else { pStart = parent.date; pEnd = parent.date; }
+    if(child.type==='task'){
+      cStart = child.start; cEnd = child.end;
+    } else { cStart = child.date; cEnd = child.date; }
+
+    if(dep.type==='FS'){
+      const minStart = pEnd + lag;
+      if(cStart < minStart){
+        const delta = minStart - cStart;
+        if(child.type==='task'){ child.start += delta; child.end += delta; }
+        else { child.date += delta; }
+      }
+    } else if(dep.type==='SS'){
+      const minStart = pStart + lag;
+      if(cStart < minStart){
+        const delta = minStart - cStart;
+        if(child.type==='task'){ child.start += delta; child.end += delta; }
+        else { child.date += delta; }
+      }
+    } else if(dep.type==='FF'){
+      const minEnd = pEnd + lag;
+      if(cEnd < minEnd){
+        const delta = minEnd - cEnd;
+        if(child.type==='task'){ child.start += delta; child.end += delta; }
+        else { child.date += delta; }
+      }
+    } else if(dep.type==='SF'){
+      const minEnd = pStart + lag;
+      if(cEnd < minEnd){
+        const delta = minEnd - cEnd;
+        if(child.type==='task'){ child.start += delta; child.end += delta; }
+        else { child.date += delta; }
+      }
+    }
+  }
+
+  // ====== Inspector ======
+  const inspector = document.getElementById('inspector');
+  const inspectorBody = document.getElementById('inspectorBody');
+
+  function openInspector(id){
+    const it = getItem(id);
+    if(!it) return;
+    setSelection(id);
+    state.selection = id;
+    inspector.style.display='block';
+    inspectorBody.innerHTML = '';
+    const colourValue = normaliseColor(it.color||'#60a5fa');
+    const textColourValue = normaliseColor(it.text||'#0b1324');
+    const common = `
+        <label>Name<input type="text" id="inName" value="${it.name}"></label>
+        <label>Team<select id="inTeam">${state.teams.map(t=>`<option value="${t.id}" ${t.id===it.teamId?'selected':''}>${t.name}</option>`).join('')}</select></label>
+        <label>Colour
+          <div class="color-row">
+            <input type="color" id="inColorPicker" value="${colourValue}">
+            <input type="text" id="inColor" value="${colourValue}">
+          </div>
+        </label>
+        <label>Text colour
+          <div class="color-row">
+            <input type="color" id="inTextPicker" value="${textColourValue}">
+            <input type="text" id="inText" value="${textColourValue}">
+          </div>
+        </label>
+    `;
+    if(it.type==='task'){
+      inspectorBody.innerHTML = common + `
+        <label>Start<input type="date" id="inStart" value="${fmt(it.start)}"></label>
+        <label>End<input type="date" id="inEnd" value="${fmt(it.end)}"></label>
+        <label>Shape<select id="inShape">
+          <option value="rect" ${it.shape==='rect'?'selected':''}>Rectangle</option>
+          <option value="pill" ${it.shape==='pill'?'selected':''}>Pill</option>
+          <option value="slant" ${it.shape==='slant'?'selected':''}>Parallelogram</option>
+        </select></label>
+      `;
+    } else {
+      inspectorBody.innerHTML = common + `
+        <label>Date<input type="date" id="inDate" value="${fmt(it.date)}"></label>
+      `;
+    }
+
+    const cp = document.getElementById('inColorPicker');
+    const ct = document.getElementById('inColor');
+    const tp = document.getElementById('inTextPicker');
+    const tt = document.getElementById('inText');
+    cp.addEventListener('input', ()=>{ ct.value = cp.value; });
+    ct.addEventListener('input', ()=>{ if(isHex(ct.value)) cp.value = normaliseColor(ct.value); });
+    tp.addEventListener('input', ()=>{ tt.value = tp.value; });
+    tt.addEventListener('input', ()=>{ if(isHex(tt.value)) tp.value = normaliseColor(tt.value); });
+
+    document.getElementById('deleteBtn').onclick = ()=>{
+      const idx = state.items.findIndex(x=>x.id===id);
+      if(idx>=0) state.items.splice(idx,1);
+      state.deps = state.deps.filter(d=> d.fromId!==id && d.toId!==id );
+      inspector.style.display='none'; state.selection=null; renderAll();
+    };
+
+    document.getElementById('closeInspector').onclick = ()=>{
+      it.name = document.getElementById('inName').value.trim()||it.name;
+      it.teamId = document.getElementById('inTeam').value;
+      it.color = normaliseColor(document.getElementById('inColor').value.trim()||it.color);
+      it.text = normaliseColor(document.getElementById('inText').value.trim()||it.text);
+      if(it.type==='task'){
+        it.start = parse(document.getElementById('inStart').value);
+        it.end = parse(document.getElementById('inEnd').value);
+        it.shape = document.getElementById('inShape').value;
+      } else {
+        it.date = parse(document.getElementById('inDate').value);
+      }
+      inspector.style.display='none'; state.selection=null; computeViewRange(); renderAll();
+    };
+  }
+
+  // ====== Toolbar actions ======
+  document.getElementById('addTeamBtn').onclick = ()=>{
+    const name = 'Team ' + (state.teams.length+1);
+    state.teams.push({id:uid(), name, color: normaliseColor(randomColour())});
+    computeViewRange();
+    renderAll();
+  };
+
+  document.getElementById('addTaskBtn').onclick = ()=>{
+    if(!state.teams.length){ state.teams.push({id:uid(), name:'Team 1', color: normaliseColor(randomColour())}); }
+    const teamId = state.teams[0].id;
+    const today = parse(fmt(new Date()));
+    const it = {id:uid(), type:'task', name:'New Task', teamId, start:today, end:addDays(today,5), color: normaliseColor(randomColour()), text:'#0b1324', shape:'rect'};
+    state.items.push(it); computeViewRange(); renderAll(); openInspector(it.id);
+  };
+
+  document.getElementById('addGateBtn').onclick = ()=>{
+    if(!state.teams.length){ state.teams.push({id:uid(), name:'Team 1', color: normaliseColor(randomColour())}); }
+    const teamId = state.teams[0].id;
+    const today = parse(fmt(new Date()));
+    const it = {id:uid(), type:'gate', name:'Stage Gate', teamId, date:addDays(today,7), color: normaliseColor(randomColour())};
+    state.items.push(it); computeViewRange(); renderAll(); openInspector(it.id);
+  };
+
+  document.getElementById('linkModeBtn').onclick = (e)=>{
+    state.linkMode = !state.linkMode; state._linkFrom=null; hideTip();
+    e.currentTarget.classList.toggle('active', state.linkMode);
+  };
+
+  document.getElementById('openInspectorBtn').onclick = ()=>{
+    if(!state.selection){ showToast('Select a task or stage gate first.', false); return; }
+    openInspector(state.selection);
+  };
+
+  // Zoom
+  zoom.oninput = (e)=>{ state.pxPerDay = parseInt(e.target.value); renderAll(); };
+
+  // Export PDF
+  document.getElementById('exportBtn').onclick = ()=> exportPDF();
+
+  // Import JSON
+  document.getElementById('importBtn').onclick = ()=> document.getElementById('importFile').click();
+  document.getElementById('importFile').addEventListener('change', (e)=>{
+    const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = ()=>{
+      try{ const data = JSON.parse(reader.result);
+        state.pxPerDay = data.pxPerDay || state.pxPerDay;
+        state.time = Object.assign(state.time, data.time||{});
+        state.teams = data.teams || []; state.items = data.items || []; state.deps = data.deps || [];
+        computeViewRange(); renderAll();
+      }catch(err){ showToast('Failed to import JSON: '+err.message, false); }
+    }; reader.readAsText(file);
+  });
+
+  // ====== Adjust timeline controls ======
+  const timeModal = document.getElementById('timeModal');
+  const timeSeg = document.getElementById('timeSeg');
+  const timeMode = document.getElementById('timeMode');
+  const timePadBefore = document.getElementById('timePadBefore');
+  const timePadAfter = document.getElementById('timePadAfter');
+  const timeStart = document.getElementById('timeStart');
+  const timeAutoBlock = document.getElementById('timeAutoBlock');
+  const timeManualBlock = document.getElementById('timeManualBlock');
+
+  document.getElementById('adjustTimeBtn').onclick = (e)=>{
+    timeSeg.value = state.time.segmentation;
+    timeMode.value = state.time.mode;
+    timePadBefore.value = state.time.padBefore;
+    timePadAfter.value = state.time.padAfter;
+
+    const vs = (state.time.mode==='manual' && state.time.manualStart) ? state.time.manualStart : state.viewStart;
+    const ve = (state.time.mode==='manual' && state.time.manualEnd) ? state.time.manualEnd : state.viewEnd;
+    const s0 = monthStartTs(vs);
+    timeStart.value = fmt(s0);
+    const eNext = new Date(new Date(ve).getFullYear(), new Date(ve).getMonth()+1, 1).getTime();
+    const monthsCount = Math.max(1, (new Date(eNext).getFullYear()*12 + new Date(eNext).getMonth()) - (new Date(s0).getFullYear()*12 + new Date(s0).getMonth()));
+    document.getElementById('timeMonthsCount').value = monthsCount;
+
+    const isAuto = (timeMode.value==='auto');
+    timeAutoBlock.style.display = isAuto ? 'block' : 'none';
+    timeManualBlock.style.display = isAuto ? 'none' : 'block';
+    placeModal(timeModal, e.clientX, e.clientY);
+  };
+
+  timeMode.onchange = ()=>{
+    const isAuto = (timeMode.value==='auto');
+    timeAutoBlock.style.display = isAuto ? 'block' : 'none';
+    timeManualBlock.style.display = isAuto ? 'none' : 'block';
+  };
+
+  document.getElementById('applyTime').onclick = ()=>{
+    state.time.segmentation = timeSeg.value;
+    state.time.mode = timeMode.value;
+    if(state.time.mode==='auto'){
+      state.time.padBefore = parseInt(timePadBefore.value)||0;
+      state.time.padAfter = parseInt(timePadAfter.value)||0;
+      state.time.manualStart = null; state.time.manualEnd = null;
+    } else {
+      const sRaw = parse(timeStart.value);
+      const s0 = monthStartTs(sRaw);
+      const n = clamp(parseInt(document.getElementById('timeMonthsCount').value)||1, 1, 120);
+      const e = addMonthsTs(s0, n) - DAY;
+      state.time.manualStart = s0; state.time.manualEnd = e;
+    }
+    computeViewRange(); renderAll();
+    timeModal.style.display='none';
+  };
+  document.getElementById('cancelTime').onclick = ()=>{ timeModal.style.display='none'; };
+
+  // ====== Helpers ======
+  function randomColour(){
+    const palette = ['#60a5fa','#93c5fd','#a78bfa','#8b5cf6','#f472b6','#fb7185','#f59e0b','#34d399','#22c55e','#38bdf8','#14b8a6'];
+    return palette[Math.floor(Math.random()*palette.length)];
+  }
+
+  function renderAll(){
+    renderLeft();
+    renderTimeline();
+    renderGrid();
+    if(state.selection) setSelection(state.selection);
+  }
+
+  function showToast(msg, ok=true){ toast.textContent = msg; toast.className = 'toast ' + (ok?'ok':'err'); toast.style.display='block'; setTimeout(()=> toast.style.display='none', 3000); }
+
+  function placeModal(modal, x, y){
+    modal.style.display='block';
+    const pad = 8;
+    const w = modal.offsetWidth; const h = modal.offsetHeight;
+    let left = x + pad; let top = y + pad;
+    left = Math.min(Math.max(pad, left), window.innerWidth - w - pad);
+    top = Math.min(Math.max(pad, top), window.innerHeight - h - pad);
+    modal.style.left = left + 'px';
+    modal.style.top = top + 'px';
+  }
+
+  // Compute a PDF-friendly render, scale to A4 landscape, print, then restore
+  function exportPDF(){
+    // Step 1: choose a px/day that fits width
+    const days = Math.max(1, Math.ceil((state.viewEnd - state.viewStart)/DAY));
+    const PAGE_W = 1122; // px at 96dpi for A4 width
+    const PAGE_H = 793;  // px at 96dpi for A4 height
+    const MARGIN = Math.round(96*(12/25.4)); // 12mm
+    const availW = PAGE_W - 2*MARGIN;
+    const availH = PAGE_H - 2*MARGIN;
+    const leftW = 260; const gap = 12;
+    let targetPxPerDay = Math.floor( (availW - leftW - gap) / days );
+    targetPxPerDay = clamp(targetPxPerDay, 4, 48);
+
+    const prevPx = state.pxPerDay;
+    const prevSeg = state.time.segmentation;
+
+    if(targetPxPerDay < 8 && state.time.segmentation==='days'){
+      state.time.segmentation = 'weeks';
+    }
+
+    state.pxPerDay = targetPxPerDay;
+    renderAll();
+
+    // Step 2: scale the whole board to also fit height
+    const prevTransform = board.style.transform;
+    const prevOrigin = board.style.transformOrigin;
+    const rect = board.getBoundingClientRect();
+    const scale = Math.min(availW/rect.width, availH/rect.height, 1);
+    board.style.transformOrigin = 'top left';
+    board.style.transform = `scale(${scale})`;
+
+    // Step 3: print and restore
+    const restore = ()=>{
+      board.style.transform = prevTransform;
+      board.style.transformOrigin = prevOrigin;
+      state.pxPerDay = prevPx;
+      state.time.segmentation = prevSeg;
+      renderAll();
+      window.removeEventListener('afterprint', restore);
+    };
+    window.addEventListener('afterprint', restore);
+
+    window.print();
+  }
+
+  // ====== Kick off ======
+  function seed(){
+    const t1 = {id:uid(), name:"Core Project", color:"#60a5fa"};
+    const t2 = {id:uid(), name:"IT & Security", color:"#fb7185"};
+    const t3 = {id:uid(), name:"Ops", color:"#34d399"};
+    state.teams.push(t1,t2,t3);
+
+    const today = new Date();
+    const base = parse(fmt(today));
+
+    const a = {id:uid(), type:'task', name:'Discovery', teamId:t1.id, start: addDays(base,0), end:addDays(base,7), color:'#60a5fa', text:'#0b1324', shape:'rect'};
+    const b = {id:uid(), type:'task', name:'Design', teamId:t1.id, start: addDays(base,8), end:addDays(base,15), color:'#93c5fd', text:'#0b1324', shape:'pill'};
+    const c = {id:uid(), type:'task', name:'Integration', teamId:t2.id, start: addDays(base,10), end:addDays(base,18), color:'#fb7185', text:'#1f2937', shape:'slant'};
+    const d = {id:uid(), type:'gate', name:'Stage Gate A', teamId:t1.id, date:addDays(base,16), color:'#8b5cf6'};
+    const e = {id:uid(), type:'task', name:'Rollout', teamId:t3.id, start: addDays(base,19), end:addDays(base,27), color:'#34d399', text:'#0b1324', shape:'rect'};
+
+    state.items.push(a,b,c,d,e);
+    state.deps.push({id:uid(), fromId:a.id, toId:b.id, type:'FS', lag:0});
+    state.deps.push({id:uid(), fromId:b.id, toId:c.id, type:'FS', lag:0});
+    state.deps.push({id:uid(), fromId:c.id, toId:e.id, type:'FS', lag:2});
+
+    computeViewRange();
+    renderAll();
+  }
+
+  seed();
+
+  </script>
+</body>
+</html>
